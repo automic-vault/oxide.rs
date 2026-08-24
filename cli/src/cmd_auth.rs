@@ -344,7 +344,8 @@ impl CmdAuthLogin {
             });
 
         profile.insert("host", toml_edit::value(self.host.as_host().to_string()));
-        profile.insert("token", toml_edit::value(token));
+        oxide::store_av_credential(&profile_name, host, &token)?;
+        profile.insert("token", toml_edit::value(oxide::AV_CREDENTIAL_MARKER));
         if let Some(token_id) = token_id {
             profile.insert("token_id", toml_edit::value(token_id));
         }
@@ -429,9 +430,7 @@ impl CmdAuthLogout {
         let credentials_path = config_dir.join("credentials.toml");
 
         if self.all {
-            // Clear the entire file for users who want to reset their known hosts.
-            let _ = create_private_file(&credentials_path)?;
-            writeln!(io::stdout(), "Removed all authentication information")?;
+            bail!("`oxide auth logout --all` is unavailable with Automic Vault; remove one profile at a time")
         } else {
             let profile = ctx
                 .client_config()
@@ -447,6 +446,11 @@ impl CmdAuthLogout {
             let mut credentials = credentials_contents
                 .parse::<toml_edit::DocumentMut>()
                 .unwrap();
+            let profile_info =
+                ctx.cred_file().profile.get(profile_name).ok_or_else(|| {
+                    anyhow!("profile {profile_name:?} has no credential metadata")
+                })?;
+            oxide::delete_av_credential(profile_name, &profile_info.host)?;
             if let Some(profiles) = credentials.get_mut("profile") {
                 let profiles = profiles.as_table_mut().unwrap();
                 profiles.remove(profile_name);
@@ -522,9 +526,7 @@ impl CmdAuthStatus {
         } else {
             for (profile_name, profile_info) in &ctx.cred_file().profile {
                 let client = Client::new_authenticated_config(
-                    &ctx.client_config()
-                        .clone()
-                        .with_host_and_token(&profile_info.host, &profile_info.token),
+                    &ctx.client_config().clone().with_profile(profile_name),
                 )?;
 
                 spinner.reset();

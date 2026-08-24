@@ -39,6 +39,7 @@ tokio = { workspace = true }
 
 [features]
 default = []
+av-isotope = []
 clap = ["dep:clap"]
 extras = ["dep:tokio", "dep:flume"]
 native-tls-vendored = ["reqwest/native-tls-vendored"]
