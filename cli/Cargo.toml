@@ -40,7 +40,7 @@ md5 = { workspace = true }
 oauth2 = { workspace = true }
 oauth2-reqwest = { workspace = true }
 open = { workspace = true }
-oxide = { workspace = true, features = ["clap", "extras"] }
+oxide = { workspace = true, features = ["av-isotope", "clap", "extras"] }
 oxnet = { workspace = true }
 predicates = { workspace = true }
 ratatui = { workspace = true }

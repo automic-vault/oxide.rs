@@ -1,0 +1,28 @@
+name:
+  isotope:oxide-cli
+
+replaces:
+  brew:oxide-cli
+
+build: |
+  cargo +1.97.1 test --locked -p oxide --features av-isotope plaintext_profile_token_fails_closed
+  cargo +1.97.1 build --locked --release --bin oxide
+  mkdir -p bin
+  cp target/release/oxide bin/oxide
+  codesign --force --options runtime --timestamp \
+    --identifier oxide \
+    --sign "$CODESIGN_IDENTITY" \
+    bin/oxide
+  tar czf out.tgz bin/oxide
+
+justification:
+  title:
+    Unprotected Credential Access
+  detail: |
+    Upstream oxide stores API tokens in plaintext on disk and accepts them
+    from the environment.
+
+    This isotope routes profile-token reads, login stores, and logout deletes
+    through Automic Vault's authenticated XPC service while retaining only
+    profile metadata and markers on disk. Plaintext and environment tokens
+    fail closed.

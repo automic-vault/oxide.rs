@@ -49,6 +49,8 @@ pub enum OxideAuthError {
     NoProfile(PathBuf, String),
     #[error("no authenticated hosts; use oxide auth login to authenticate")]
     NoAuthenticatedHosts,
+    #[error("Automic Vault credential helper failed: {0}")]
+    CredentialHelper(String),
 }
 
 // Hook into the generated API client to capture and log request metadata.

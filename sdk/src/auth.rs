@@ -6,13 +6,24 @@
 
 use std::{
     collections::BTreeMap,
+    io::Write,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 use crate::{Client, OxideAuthError};
 use reqwest::ClientBuilder;
 use serde::Deserialize;
+
+#[cfg(feature = "av-isotope")]
+pub const AV_CREDENTIAL_MARKER: &str = "@av";
+
+#[cfg(feature = "av-isotope")]
+const AV_PATH: &str = "/usr/local/bin/av";
+
+#[cfg(feature = "av-isotope")]
+const MAX_TOKEN_BYTES: usize = 64 * 1024;
 
 /// Credentials for a particular profile.
 #[derive(Deserialize, Debug)]
@@ -276,6 +287,12 @@ fn get_profile_auth(
     config_dir: &Path,
     profile: Option<&String>,
 ) -> Result<(String, String), OxideAuthError> {
+    #[cfg(feature = "av-isotope")]
+    if std::env::var_os("OXIDE_TOKEN").is_some() {
+        return Err(OxideAuthError::CredentialHelper(
+            "OXIDE_TOKEN is disabled by the Automic Vault isotope".into(),
+        ));
+    }
     if let (None, Ok(env_token)) = (profile, std::env::var("OXIDE_TOKEN")) {
         let env_host = std::env::var("OXIDE_HOST").map_err(|_| OxideAuthError::MissingHost)?;
         Ok((env_host, env_token))
@@ -326,7 +343,105 @@ fn get_profile_auth(
         let profile = creds
             .profile
             .get(&profile_name)
-            .ok_or(OxideAuthError::NoProfile(credentials_path, profile_name))?;
-        Ok((profile.host.clone(), profile.token.clone()))
+            .ok_or_else(|| OxideAuthError::NoProfile(credentials_path, profile_name.clone()))?;
+        #[cfg(feature = "av-isotope")]
+        let token = if profile.token == AV_CREDENTIAL_MARKER {
+            av_credential("get", &profile_name, &profile.host, None)?
+        } else {
+            return Err(OxideAuthError::CredentialHelper(format!(
+                "profile {profile_name:?} contains a plaintext token; run `av harden oxide-cli`"
+            )));
+        };
+        #[cfg(not(feature = "av-isotope"))]
+        let token = profile.token.clone();
+        Ok((profile.host.clone(), token))
+    }
+}
+
+#[cfg(feature = "av-isotope")]
+pub fn store_av_credential(profile: &str, host: &str, token: &str) -> Result<(), OxideAuthError> {
+    av_credential("store", profile, host, Some(token)).map(|_| ())
+}
+
+#[cfg(feature = "av-isotope")]
+pub fn delete_av_credential(profile: &str, host: &str) -> Result<(), OxideAuthError> {
+    av_credential("forget", profile, host, None).map(|_| ())
+}
+
+#[cfg(feature = "av-isotope")]
+fn av_credential(
+    action: &str,
+    profile: &str,
+    host: &str,
+    token: Option<&str>,
+) -> Result<String, OxideAuthError> {
+    let mut child = Command::new(AV_PATH)
+        .args(["oxide-credential", action, profile, host])
+        .stdin(if token.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| OxideAuthError::CredentialHelper(error.to_string()))?;
+    if let Some(token) = token {
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| OxideAuthError::CredentialHelper("helper stdin is unavailable".into()))?
+            .write_all(token.as_bytes())
+            .map_err(|error| OxideAuthError::CredentialHelper(error.to_string()))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| OxideAuthError::CredentialHelper(error.to_string()))?;
+    if !output.status.success() {
+        return Err(OxideAuthError::CredentialHelper(format!(
+            "helper exited with {}",
+            output.status
+        )));
+    }
+    if action != "get" {
+        return Ok(String::new());
+    }
+    if output.stdout.len() > MAX_TOKEN_BYTES + 1 {
+        return Err(OxideAuthError::CredentialHelper(
+            "helper returned an oversized token".into(),
+        ));
+    }
+    let token = String::from_utf8(output.stdout)
+        .map_err(|_| OxideAuthError::CredentialHelper("helper returned non-UTF-8 data".into()))?;
+    let token = token.strip_suffix('\n').unwrap_or(&token);
+    if token.is_empty()
+        || token
+            .bytes()
+            .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+    {
+        return Err(OxideAuthError::CredentialHelper(
+            "helper returned an invalid token".into(),
+        ));
+    }
+    Ok(token.to_string())
+}
+
+#[cfg(all(test, feature = "av-isotope"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plaintext_profile_token_fails_closed() {
+        let config_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            config_dir.path().join("credentials.toml"),
+            "[profile.test]\nhost = \"https://oxide.test\"\ntoken = \"plaintext\"\nuser = \"test\"\n",
+        )
+        .unwrap();
+
+        let error = get_profile_auth(config_dir.path(), Some(&"test".to_string())).unwrap_err();
+        assert!(matches!(
+            error,
+            OxideAuthError::CredentialHelper(message) if message.contains("plaintext token")
+        ));
     }
 }
