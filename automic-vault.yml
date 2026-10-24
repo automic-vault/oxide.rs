@@ -6,6 +6,7 @@ replaces:
 
 build: |
   cargo +1.97.1 test --locked -p oxide --features av-isotope plaintext_profile_token_fails_closed
+  cargo +1.97.1 test --locked -p oxide-cli --test test_auth test_cmd_auth_status_env
   cargo +1.97.1 build --locked --release --bin oxide
   mkdir -p bin
   cp target/release/oxide bin/oxide

@@ -489,6 +489,10 @@ pub struct CmdAuthStatus {}
 
 impl CmdAuthStatus {
     pub async fn status(&self, ctx: &Context) -> Result<()> {
+        if std::env::var_os("OXIDE_TOKEN").is_some() {
+            bail!("OXIDE_TOKEN is disabled by the Automic Vault isotope")
+        }
+
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
             ProgressStyle::default_spinner()

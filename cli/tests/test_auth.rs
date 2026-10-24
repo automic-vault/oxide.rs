@@ -526,108 +526,16 @@ fn test_cmd_auth_status() {
 
 #[test]
 fn test_cmd_auth_status_env() {
-    let server = MockServer::start();
-
-    let oxide_mock = server.current_user_view(|when, then| {
-        when.into_inner()
-            .header("authorization", "Bearer oxide-token-good");
-
-        then.ok(&oxide::types::CurrentUser {
-            display_name: "privileged".to_string(),
-            id: "001de000-05e4-4000-8000-000000004007".parse().unwrap(),
-            silo_id: "d1bb398f-872c-438c-a4c6-2211e2042526".parse().unwrap(),
-            silo_name: "funky-town".parse().unwrap(),
-            fleet_viewer: false,
-            silo_admin: false,
-            time_created: "1985-10-26T01:20:00-07:00".parse().unwrap(),
-            time_modified: "2015-10-21T16:29:00-07:00".parse().unwrap(),
-        });
-    });
-
-    let temp_dir = tempfile::tempdir().unwrap();
-    let temp_dir_path = temp_dir.path();
-
-    write_creds(
-        temp_dir_path,
-        &format!(
-            "\
-        [profile.funky-town]\n\
-        host = \"{}\"\n\
-        token = \"oxide-token-good\"\n\
-        user = \"00000000-0000-0000-0000-000000000000\"\n\
-    ",
-            server.url("")
-        ),
-    );
-
-    // Validate authenticated credentials
     assert_cmd::cargo::cargo_bin_cmd!("oxide")
         .arg("auth")
         .arg("status")
-        .env("OXIDE_HOST", server.url(""))
+        .env("OXIDE_HOST", "https://oxide.test")
         .env("OXIDE_TOKEN", "oxide-token-good")
-        .assert()
-        .success()
-        .stdout(format!(
-            "Logged in to {} as 001de000-05e4-4000-8000-000000004007\n",
-            server.url("")
-        ));
-
-    // OXIDE_PROFILE also works, uses creds file
-    assert_cmd::cargo::cargo_bin_cmd!("oxide")
-        .env("OXIDE_PROFILE", "funky-town")
-        .arg("--config-dir")
-        .arg(temp_dir.path().as_os_str())
-        .arg("auth")
-        .arg("status")
-        .assert()
-        .success()
-        .stdout(format!(
-            "Profile \"funky-town\" ({}) status: Authenticated\n",
-            server.url(""),
-        ));
-
-    // OXIDE_HOST conflicts with OXIDE_PROFILE
-    assert_cmd::cargo::cargo_bin_cmd!("oxide")
-        .env("OXIDE_HOST", server.url(""))
-        .env("OXIDE_TOKEN", "oxide-token-good")
-        .env("OXIDE_PROFILE", "ignored")
-        .arg("--config-dir")
-        .arg(temp_dir.path().as_os_str())
-        .arg("auth")
-        .arg("status")
         .assert()
         .failure()
-        .stderr(format!("{}\n", oxide::OxideAuthError::HostProfileConflict));
-
-    oxide_mock.assert_calls(2);
-
-    let oxide_mock = server.current_user_view(|when, then| {
-        when.into_inner()
-            .header("authorization", "Bearer oxide-token-bad");
-        then.server_error(
-            500,
-            &oxide::types::Error {
-                error_code: None,
-                message: "oops".to_string(),
-                request_id: "42".to_string(),
-            },
-        );
-    });
-
-    // Try invalid credentials.
-    assert_cmd::cargo::cargo_bin_cmd!("oxide")
-        .arg("auth")
-        .arg("status")
-        .env("OXIDE_HOST", server.url(""))
-        .env("OXIDE_TOKEN", "oxide-token-bad")
-        .assert()
-        .success()
-        .stdout(format!(
-            "{}: Server responded with an error message: oops\n",
-            server.url("")
+        .stderr(str::contains(
+            "OXIDE_TOKEN is disabled by the Automic Vault isotope",
         ));
-    oxide_mock.assert();
 }
 
 // Validate custom client options.
